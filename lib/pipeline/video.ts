@@ -3,7 +3,6 @@ import fs from 'fs/promises';
 import path from 'path';
 
 const FAL_KEY = process.env.FAL_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // Fallback
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -12,7 +11,6 @@ function sleep(ms: number): Promise<void> {
 async function submitFalVideo(imageUrl: string, motionPrompt: string, duration: number): Promise<string> {
   if (!FAL_KEY) throw new Error('FAL_KEY not configured');
 
-  // fal.ai queue submit
   const res = await fetch('https://fal.run/wan/v2.6/image-to-video', {
     method: 'POST',
     headers: {
@@ -34,7 +32,6 @@ async function submitFalVideo(imageUrl: string, motionPrompt: string, duration: 
 
   const data = await res.json();
   
-  // fal.run returns the result directly (synchronous endpoint)
   if (data.video?.url) {
     return data.video.url;
   }
@@ -45,43 +42,61 @@ async function submitFalVideo(imageUrl: string, motionPrompt: string, duration: 
 async function uploadImageToFal(imageBase64: string): Promise<string> {
   if (!FAL_KEY) throw new Error('FAL_KEY not configured');
 
-  // Upload image to fal.ai storage
+  // Use fal.ai's REST file upload
   const imageBuffer = Buffer.from(imageBase64, 'base64');
   
-  const res = await fetch('https://fal.ai/api/storage/upload/base64', {
-    method: 'POST',
+  const res = await fetch('https://fal.ai/api/storage/upload', {
+    method: 'PUT',
     headers: {
       'Authorization': `Key ${FAL_KEY}`,
-      'Content-Type': 'application/json',
+      'Content-Type': 'image/png',
     },
-    body: JSON.stringify({
-      file_name: 'scene.png',
-      content_type: 'image/png',
-      data: imageBase64,
-    }),
+    body: imageBuffer,
   });
 
-  if (!res.ok) {
-    // Fallback: use data URI
-    return `data:image/png;base64,${imageBase64}`;
+  if (res.ok) {
+    const data = await res.json();
+    if (data.url) return data.url;
   }
 
-  const data = await res.json();
-  return data.url || data.file_url || `data:image/png;base64,${imageBase64}`;
+  // Fallback: try the REST upload endpoint
+  const res2 = await fetch('https://rest.alpha.fal.ai/storage/upload', {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Key ${FAL_KEY}`,
+      'Content-Type': 'image/png',
+    },
+    body: imageBuffer,
+  });
+
+  if (res2.ok) {
+    const data2 = await res2.json();
+    if (data2.url) return data2.url;
+  }
+
+  throw new Error('Failed to upload image to fal.ai storage');
 }
 
 export async function generateSingleVideo(
-  imageBase64: string,
+  imageSource: string,
   motionPrompt: string,
   duration: number,
   jobDir: string,
-  sceneIndex: number
+  sceneIndex: number,
+  isUrl: boolean = false
 ): Promise<string> {
   if (duration < 5) duration = 5;
-  if (duration > 8) duration = 5; // Wan supports 5, 10, 15 — use 5 for short scenes
+  if (duration > 8) duration = 5;
 
-  // Upload image to get a URL
-  const imageUrl = await uploadImageToFal(imageBase64);
+  let imageUrl: string;
+  
+  if (isUrl) {
+    // Already a CDN URL from fal.ai Flux generation
+    imageUrl = imageSource;
+  } else {
+    // Base64 data — upload to fal.ai storage first
+    imageUrl = await uploadImageToFal(imageSource);
+  }
 
   // Generate video
   const videoUrl = await submitFalVideo(imageUrl, motionPrompt, duration);
@@ -100,27 +115,33 @@ export async function generateAllVideos(
   scenes: Scene[],
   jobDir: string,
   duration: number,
+  imageUrls?: string[],
   onProgress?: (current: number, total: number) => void
 ): Promise<string[]> {
   const videoPaths: string[] = [];
 
   for (let i = 0; i < scenes.length; i++) {
-    const imagePath = path.join(jobDir, `scene_${i + 1}.png`);
-    const imageBuffer = await fs.readFile(imagePath);
-    const imageBase64 = imageBuffer.toString('base64');
+    const url = imageUrls?.[i];
+    let imgBase64: string | undefined;
+    
+    if (!url) {
+      const imagePath = path.join(jobDir, `scene_${i + 1}.png`);
+      const imageBuffer = await fs.readFile(imagePath);
+      imgBase64 = imageBuffer.toString('base64');
+    }
 
     const filename = await generateSingleVideo(
-      imageBase64,
+      url || imgBase64!,
       scenes[i].motion_prompt || scenes[i].motion_description || 'gentle smooth animation',
       duration,
       jobDir,
-      i
+      i,
+      !!url
     );
     videoPaths.push(filename);
 
     if (onProgress) onProgress(i + 1, scenes.length);
 
-    // Small cooldown between scenes (fal.ai is more lenient)
     if (i < scenes.length - 1) {
       await sleep(5000);
     }

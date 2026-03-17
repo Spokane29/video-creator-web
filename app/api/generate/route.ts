@@ -98,16 +98,22 @@ export async function POST(request: NextRequest) {
           for (let i = 0; i < scenes.length; i++) {
             send({ stage: 'videos', progress: 45 + (i / scenes.length) * 25, message: `Generating video ${i + 1}/${scenes.length}...` });
             
-            const imgPath = path.join(jobDir, imagePaths[i] || `scene_${i + 1}.png`);
-            const imgBuffer = await fs.readFile(imgPath);
-            const imgBase64 = imgBuffer.toString('base64');
+            // Use fal.ai CDN URL directly if available, otherwise read from disk
+            const imgUrl = imageUrls[i] || null;
+            let imgBase64: string | undefined;
+            if (!imgUrl) {
+              const imgPath = path.join(jobDir, imagePaths[i] || `scene_${i + 1}.png`);
+              const imgBuffer = await fs.readFile(imgPath);
+              imgBase64 = imgBuffer.toString('base64');
+            }
 
             const videoFile = await generateSingleVideo(
-              imgBase64,
+              imgUrl || imgBase64!,
               scenes[i].motion_prompt || scenes[i].motion_description || 'gentle smooth animation',
               params.duration,
               jobDir,
-              i
+              i,
+              !!imgUrl // isUrl flag
             );
             videoPaths.push(videoFile);
             send({ stage: 'videos', progress: 45 + ((i + 1) / scenes.length) * 25, message: `Video ${i + 1}/${scenes.length} done!` });
