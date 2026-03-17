@@ -1,74 +1,92 @@
 import { Script, GenerationParams } from './types';
-import { getTemplate } from '../templates';
+import fs from 'fs/promises';
+import path from 'path';
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const FAL_KEY = process.env.FAL_KEY;
+
+async function loadTemplate(templateName: string): Promise<any> {
+  try {
+    const templatePath = path.join(process.cwd(), 'templates', `${templateName}.json`);
+    const data = await fs.readFile(templatePath, 'utf-8');
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}
 
 export async function generateScript(params: GenerationParams): Promise<Script> {
-  if (!GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY not configured');
-  }
+  if (!FAL_KEY) throw new Error('FAL_KEY not configured');
 
-  const template = await getTemplate(params.template);
-  
-  const systemPrompt = template 
-    ? `You are creating a ${template.name} video. ${template.description}
-       Style: ${template.style}
-       Tone: ${template.tone}
-       Scene structure: ${JSON.stringify(template.scene_structure)}`
-    : 'You are creating an engaging short-form video.';
+  const template = await loadTemplate(params.template);
+  const templateContext = template
+    ? `Style: ${template.style}. Tone: ${template.tone}. ${template.description || ''}`
+    : '';
 
-  const prompt = `${systemPrompt}
+  const prompt = `You are a video script writer. Generate a JSON script for a ${params.scenes}-scene animated short video.
 
-Create a video script with exactly ${params.scenes} scenes.
 Topic: ${params.prompt}
+${templateContext}
 
-Each scene should be ${params.duration} seconds long.
+Rules:
+- Each scene has dialogue/narration under 25 words
+- Each scene has a detailed image_prompt for generating the visual (include art style, character description, setting)
+- Each scene has a motion_prompt describing how the scene should animate
+- Return ONLY valid JSON, no markdown, no explanation
 
-Respond ONLY with valid JSON in this exact format:
+JSON format:
 {
   "title": "Video Title",
   "scenes": [
     {
       "scene_number": 1,
-      "description": "Visual description of what happens in this scene",
+      "description": "Brief scene description",
       "dialogue": "The narration text for this scene",
-      "motion_description": "How the image should animate (camera movement, character actions)",
-      "image_prompt": "Detailed prompt for generating the scene image"
+      "image_prompt": "Detailed visual description for image generation",
+      "motion_prompt": "How the scene should animate (camera movement, character actions)"
     }
   ]
-}
+}`;
 
-Make it engaging, concise, and suitable for ${params.aspect_ratio} aspect ratio.`;
-
-  const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+  const res = await fetch('https://fal.run/fal-ai/any-llm', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Authorization': `Key ${FAL_KEY}`,
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({
-      contents: [{
-        parts: [{ text: prompt }]
-      }],
-      generationConfig: {
-        temperature: 0.8,
-        maxOutputTokens: 2048,
-      }
-    })
+      model: 'meta-llama/llama-3.1-70b-instruct',
+      prompt,
+    }),
   });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Script generation failed: ${error}`);
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Script generation failed: ${err}`);
   }
 
-  const data = await response.json();
-  const textResponse = data.candidates[0].content.parts[0].text;
-  
-  // Extract JSON from response (in case it's wrapped in markdown)
-  const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error('Failed to parse script JSON from response');
+  const data = await res.json();
+  const output = data.output || '';
+
+  // Extract JSON from response (handle markdown code blocks)
+  let jsonStr = output;
+  const jsonMatch = output.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (jsonMatch) {
+    jsonStr = jsonMatch[1];
+  } else {
+    // Try to find raw JSON
+    const braceMatch = output.match(/\{[\s\S]*\}/);
+    if (braceMatch) {
+      jsonStr = braceMatch[0];
+    }
   }
 
-  const script: Script = JSON.parse(jsonMatch[0]);
-  return script;
+  try {
+    const script: Script = JSON.parse(jsonStr.trim());
+    if (!script.title || !script.scenes || !Array.isArray(script.scenes)) {
+      throw new Error('Invalid script structure');
+    }
+    return script;
+  } catch (e) {
+    throw new Error(`Failed to parse script JSON: ${e}. Raw output: ${output.slice(0, 200)}`);
+  }
 }

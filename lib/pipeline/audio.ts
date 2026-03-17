@@ -2,60 +2,48 @@ import { Scene } from './types';
 import fs from 'fs/promises';
 import path from 'path';
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const TTS_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent';
+const FAL_KEY = process.env.FAL_KEY;
 
+// Map voice names to Kokoro voices
 const VOICE_MAPPING: Record<string, string> = {
-  'nova': 'Kore',
-  'alloy': 'Aoede',
-  'echo': 'Charon',
-  'fable': 'Fenrir',
-  'onyx': 'Puck',
-  'shimmer': 'Leda',
+  'nova': 'af_heart',      // Female, warm
+  'alloy': 'af_bella',     // Female, professional
+  'echo': 'am_adam',       // Male, deep
+  'fable': 'am_michael',   // Male, narrator
+  'onyx': 'am_eric',       // Male, authoritative
+  'shimmer': 'af_sarah',   // Female, bright
 };
 
 export async function generateAudio(text: string, voice: string): Promise<Buffer> {
-  if (!GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY not configured');
-  }
+  if (!FAL_KEY) throw new Error('FAL_KEY not configured');
 
-  const geminiVoice = VOICE_MAPPING[voice] || 'Kore';
+  const kokoroVoice = VOICE_MAPPING[voice] || 'af_heart';
 
-  const payload = {
-    contents: [{
-      parts: [{ text }]
-    }],
-    generationConfig: {
-      responseModalities: ['AUDIO'],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: {
-            voiceName: geminiVoice
-          }
-        }
-      }
-    }
-  };
-
-  const response = await fetch(`${TTS_API_URL}?key=${GEMINI_API_KEY}`, {
+  const res = await fetch('https://fal.run/fal-ai/kokoro/american-english', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+    headers: {
+      'Authorization': `Key ${FAL_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      text,
+      voice: kokoroVoice,
+    }),
   });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Audio generation failed: ${error}`);
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Audio generation failed: ${err}`);
   }
 
-  const data = await response.json();
-  const audioBase64 = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  const data = await res.json();
+  const audioUrl = data.audio_url || data.audio?.url;
+  if (!audioUrl) throw new Error('No audio URL in response');
 
-  if (!audioBase64) {
-    throw new Error('No audio data in response');
-  }
-
-  return Buffer.from(audioBase64, 'base64');
+  // Download the audio
+  const audioRes = await fetch(audioUrl);
+  if (!audioRes.ok) throw new Error('Failed to download audio');
+  return Buffer.from(await audioRes.arrayBuffer());
 }
 
 export async function generateSingleAudio(
@@ -80,17 +68,13 @@ export async function generateAllAudio(
 
   for (let i = 0; i < scenes.length; i++) {
     const scene = scenes[i];
-    const audioBuffer = await generateAudio(scene.dialogue, voice);
+    const audioBuffer = await generateAudio(scene.dialogue || scene.narration || '', voice);
 
     const filename = `scene_${i + 1}.mp3`;
-    const filepath = path.join(jobDir, filename);
-    await fs.writeFile(filepath, audioBuffer);
-
+    await fs.writeFile(path.join(jobDir, filename), audioBuffer);
     audioPaths.push(filename);
 
-    if (onProgress) {
-      onProgress(i + 1, scenes.length);
-    }
+    if (onProgress) onProgress(i + 1, scenes.length);
   }
 
   return audioPaths;
