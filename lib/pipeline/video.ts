@@ -22,7 +22,7 @@ async function submitFalVideo(imageUrl: string, motionPrompt: string, duration: 
     body: JSON.stringify({
       prompt: motionPrompt,
       image_url: imageUrl,
-      duration: duration <= 5 ? '5s' : duration <= 10 ? '10s' : '15s',
+      duration: duration <= 5 ? '5' : duration <= 10 ? '10' : '15',
       resolution: '720p',
     }),
   });
