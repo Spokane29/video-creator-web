@@ -1,0 +1,12 @@
+{
+  "name": "Talking Characters",
+  "description": "Animated characters having a conversation or delivering a message",
+  "style": "3D animated Pixar-style characters with expressive faces",
+  "tone": "friendly, engaging, conversational",
+  "default_character": "friendly animated character",
+  "scene_structure": {
+    "intro": "Character introduces themselves and the topic",
+    "tips": "Character explains key points with visual demonstrations",
+    "outro": "Character summarizes and waves goodbye"
+  }
+}

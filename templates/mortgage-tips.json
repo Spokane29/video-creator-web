@@ -1,0 +1,11 @@
+{
+  "name": "Mortgage Tips",
+  "description": "Mortgage and home financing advice",
+  "style": "Professional business style with clean graphics",
+  "tone": "professional, trustworthy, informative",
+  "scene_structure": {
+    "intro": "Introduce the mortgage topic or question",
+    "tips": "Explain key concepts or tips clearly",
+    "outro": "Summary and call-to-action for consultation"
+  }
+}

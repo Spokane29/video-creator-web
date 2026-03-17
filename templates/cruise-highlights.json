@@ -1,0 +1,11 @@
+{
+  "name": "Cruise Highlights",
+  "description": "Showcase cruise destinations and experiences",
+  "style": "Travel vlog style with vibrant colors",
+  "tone": "exciting, enthusiastic, inspiring",
+  "scene_structure": {
+    "intro": "Introduce the cruise or destination",
+    "tips": "Highlight key attractions and experiences",
+    "outro": "Call-to-action to book or learn more"
+  }
+}

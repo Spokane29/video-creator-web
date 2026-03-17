@@ -1,0 +1,11 @@
+{
+  "name": "Property Tour",
+  "description": "Real estate property showcase with room-by-room tour",
+  "style": "Cinematic real estate photography style",
+  "tone": "professional, descriptive, enthusiastic",
+  "scene_structure": {
+    "intro": "Exterior shot and property overview",
+    "tips": "Tour each room or feature with detailed descriptions",
+    "outro": "Final exterior shot and call-to-action"
+  }
+}

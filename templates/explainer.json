@@ -1,0 +1,11 @@
+{
+  "name": "Explainer",
+  "description": "Educational content explaining a concept or process",
+  "style": "Clean infographic style with simple visuals",
+  "tone": "educational, clear, informative",
+  "scene_structure": {
+    "intro": "Present the problem or question",
+    "tips": "Break down the explanation into clear steps",
+    "outro": "Summarize key takeaways"
+  }
+}

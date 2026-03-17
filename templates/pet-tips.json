@@ -1,0 +1,12 @@
+{
+  "name": "Pet Tips",
+  "description": "Tips and advice for pet owners",
+  "style": "3D animated Pixar-style with cute pets",
+  "tone": "friendly, warm, educational",
+  "default_character": "cute animated pet mascot",
+  "scene_structure": {
+    "intro": "Character introduces the topic",
+    "tips": "One tip per scene with visual demonstration",
+    "outro": "Character summarizes and waves goodbye"
+  }
+}
