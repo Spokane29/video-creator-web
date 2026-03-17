@@ -11,11 +11,10 @@ const ASPECT_TO_FAL: Record<string, string> = {
   '4:3': 'landscape_4_3',
 };
 
-async function generateImageWithFlux(
+export async function generateImageWithFlux(
   prompt: string,
   aspectRatio: string,
-  styleReference?: string
-): Promise<Buffer> {
+): Promise<{ url: string; buffer: Buffer }> {
   if (!FAL_KEY) throw new Error('FAL_KEY not configured');
 
   const falAspect = ASPECT_TO_FAL[aspectRatio] || 'landscape_16_9';
@@ -26,7 +25,6 @@ async function generateImageWithFlux(
     num_images: 1,
   };
 
-  // Use Flux Dev for better quality, Schnell for speed
   const model = 'fal-ai/flux/dev';
 
   const res = await fetch(`https://fal.run/${model}`, {
@@ -47,10 +45,12 @@ async function generateImageWithFlux(
   const imageUrl = data.images?.[0]?.url;
   if (!imageUrl) throw new Error('No image URL in response');
 
-  // Download the image
+  // Download the image (needed for video generation later)
   const imgRes = await fetch(imageUrl);
   if (!imgRes.ok) throw new Error('Failed to download image');
-  return Buffer.from(await imgRes.arrayBuffer());
+  const buffer = Buffer.from(await imgRes.arrayBuffer());
+
+  return { url: imageUrl, buffer };
 }
 
 export async function generateAllImages(
@@ -59,21 +59,23 @@ export async function generateAllImages(
   jobDir: string,
   styleReference?: string,
   onProgress?: (current: number, total: number) => void
-): Promise<string[]> {
-  const imagePaths: string[] = [];
+): Promise<{ filenames: string[]; urls: string[] }> {
+  const filenames: string[] = [];
+  const urls: string[] = [];
 
   for (let i = 0; i < scenes.length; i++) {
     const scene = scenes[i];
     const prompt = scene.image_prompt || scene.visual_description || `Scene ${i + 1}`;
 
-    const imageBuffer = await generateImageWithFlux(prompt, aspectRatio, styleReference);
+    const { url, buffer } = await generateImageWithFlux(prompt, aspectRatio);
 
     const filename = `scene_${i + 1}.png`;
-    await fs.writeFile(path.join(jobDir, filename), imageBuffer);
-    imagePaths.push(filename);
+    await fs.writeFile(path.join(jobDir, filename), buffer);
+    filenames.push(filename);
+    urls.push(url);
 
     if (onProgress) onProgress(i + 1, scenes.length);
   }
 
-  return imagePaths;
+  return { filenames, urls };
 }

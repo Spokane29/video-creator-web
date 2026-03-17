@@ -9,6 +9,7 @@ interface ProgressData {
   message: string;
   error?: string;
   images?: string[];
+  imageUrls?: string[];
   videos?: string[];
   audio?: string[];
   script?: any;
@@ -31,6 +32,7 @@ export default function ProgressTracker({ jobId }: Props) {
   const [status, setStatus] = useState<ProgressData>({ stage: 'starting', progress: 0, message: 'Connecting...' });
   const [error, setError] = useState('');
   const [images, setImages] = useState<string[]>([]);
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
 
   useEffect(() => {
     // The jobId is actually used to retrieve the SSE stream
@@ -93,6 +95,7 @@ export default function ProgressTracker({ jobId }: Props) {
                 setStatus(data);
 
                 if (data.images) setImages(prev => [...new Set([...prev, ...data.images!])]);
+                if (data.imageUrls) setImageUrls(prev => [...new Set([...prev, ...data.imageUrls!])]);
                 if (data.stage === 'error') setError(data.error || data.message);
                 if (data.stage === 'complete') {
                   // Store result data and redirect
@@ -149,13 +152,17 @@ export default function ProgressTracker({ jobId }: Props) {
       </div>
 
       {/* Images Preview */}
-      {images.length > 0 && (
+      {(imageUrls.length > 0 || images.length > 0) && (
         <div>
           <h3 className="text-lg font-semibold mb-4">Generated Images</h3>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {images.map((image, index) => (
-              <div key={image} className="aspect-video bg-[#242424] rounded-lg overflow-hidden">
-                <img src={`/api/outputs/${jobId}/${image}`} alt={`Scene ${index + 1}`} className="w-full h-full object-cover" />
+            {(imageUrls.length > 0 ? imageUrls : images).map((src, index) => (
+              <div key={src} className="aspect-video bg-[#242424] rounded-lg overflow-hidden">
+                <img 
+                  src={imageUrls.length > 0 ? src : `/api/outputs/${jobId}/${src}`} 
+                  alt={`Scene ${index + 1}`} 
+                  className="w-full h-full object-cover" 
+                />
               </div>
             ))}
           </div>
@@ -165,7 +172,7 @@ export default function ProgressTracker({ jobId }: Props) {
       {/* Video generation note */}
       {status.stage === 'videos' && (
         <div className="bg-blue-500/10 border border-blue-500/50 text-blue-400 px-6 py-4 rounded-lg">
-          <p className="text-sm"><strong>⏳ Please keep this page open.</strong> Each video scene takes 1-2 minutes with a 90-second cooldown between scenes.</p>
+          <p className="text-sm"><strong>⏳ Please keep this page open.</strong> Each video scene takes 1-2 minutes to generate.</p>
         </div>
       )}
 

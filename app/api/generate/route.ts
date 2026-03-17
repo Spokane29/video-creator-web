@@ -75,19 +75,22 @@ export async function POST(request: NextRequest) {
           const scenes = script.scenes;
           let imagePaths: string[] = [];
 
+          let imageUrls: string[] = [];
           if (params.mode === 'real' && scenePhotoPaths.length > 0) {
             send({ stage: 'images', progress: 35, message: `Using ${scenePhotoPaths.length} uploaded photos` });
             imagePaths = scenePhotoPaths.map((_, i) => `scene_${i + 1}.png`);
           } else {
             send({ stage: 'images', progress: 25, message: 'Generating images...' });
-            imagePaths = await generateAllImages(
+            const result = await generateAllImages(
               scenes, params.aspect_ratio, jobDir, styleReference,
               (current, total) => {
                 send({ stage: 'images', progress: 25 + (current / total) * 15, message: `Image ${current}/${total}...` });
               }
             );
+            imagePaths = result.filenames;
+            imageUrls = result.urls;
           }
-          send({ stage: 'images', progress: 40, message: 'Images ready!', images: imagePaths });
+          send({ stage: 'images', progress: 40, message: 'Images ready!', images: imagePaths, imageUrls });
 
           // Stage 3: Videos (one at a time)
           send({ stage: 'videos', progress: 45, message: 'Starting video generation...' });

@@ -116,7 +116,7 @@ async function handleImages(jobId: string, jobDir: string, params: any, script: 
       styleRef = refBuffer.toString('base64');
     } catch {}
 
-    const imagePaths = await generateAllImages(
+    const { filenames: imagePaths } = await generateAllImages(
       script.scenes,
       params.aspect_ratio || '9:16',
       jobDir,
