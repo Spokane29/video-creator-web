@@ -1,103 +1,111 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-interface JobStatus {
+interface ProgressData {
   stage: string;
   progress: number;
   message: string;
   error?: string;
-  files: { images?: string[]; videos?: string[]; audio?: string[] };
+  images?: string[];
+  videos?: string[];
+  audio?: string[];
+  script?: any;
+  jobId?: string;
 }
 
 interface Props {
   jobId: string;
 }
 
-const STAGE_ORDER = ['script', 'images', 'videos', 'audio', 'complete'];
+const STAGE_LABELS = ['Script', 'Images', 'Videos', 'Audio', 'Complete'];
 
 function getStageIndex(stage: string): number {
-  if (stage.startsWith('video_')) return 2;
-  if (stage.startsWith('audio_')) return 3;
-  if (stage === 'script_done') return 1;
-  if (stage === 'images_done') return 2;
-  if (stage === 'videos_done') return 3;
-  return STAGE_ORDER.indexOf(stage);
+  const map: Record<string, number> = { script: 0, images: 1, videos: 2, audio: 3, complete: 4 };
+  return map[stage] ?? -1;
 }
 
 export default function ProgressTracker({ jobId }: Props) {
   const router = useRouter();
-  const [status, setStatus] = useState<JobStatus | null>(null);
+  const [status, setStatus] = useState<ProgressData>({ stage: 'starting', progress: 0, message: 'Connecting...' });
   const [error, setError] = useState('');
-  const advancingRef = useRef(false);
-
-  // Advance the pipeline by calling the next step
-  const advancePipeline = useCallback(async () => {
-    if (advancingRef.current) return;
-    advancingRef.current = true;
-
-    try {
-      const res = await fetch(`/api/pipeline/${jobId}`, { method: 'POST' });
-      if (!res.ok) {
-        const err = await res.json();
-        setError(err.error || 'Pipeline step failed');
-      }
-    } catch (err: any) {
-      setError(err.message || 'Connection error');
-    } finally {
-      advancingRef.current = false;
-    }
-  }, [jobId]);
+  const [images, setImages] = useState<string[]>([]);
 
   useEffect(() => {
-    let running = true;
+    // The jobId is actually used to retrieve the SSE stream
+    // The generate endpoint already started streaming when we got redirected here
+    // We need to store the EventSource connection or use the stored stream
 
-    const pollAndAdvance = async () => {
-      while (running) {
-        try {
-          // 1. Poll status
-          const res = await fetch(`/api/status/${jobId}`);
-          if (!res.ok) { await sleep(3000); continue; }
-          const data: JobStatus = await res.json();
-          setStatus(data);
+    // Actually, the form submission created the stream. We need a different approach:
+    // Store the formData in sessionStorage, then re-POST from here to get the stream.
+    
+    const storedParams = sessionStorage.getItem(`job_${jobId}`);
+    if (!storedParams) {
+      setError('Job data not found. Please go back and try again.');
+      return;
+    }
 
-          // 2. Check terminal states
-          if (data.stage === 'complete') {
-            setTimeout(() => router.push(`/result/${jobId}`), 2000);
-            return;
-          }
-          if (data.stage === 'error') {
-            setError(data.error || 'Generation failed');
-            return;
-          }
-
-          // 3. If stage is a "_done" state, advance to next stage
-          if (data.stage?.endsWith('_done') || data.stage === 'images_done' || data.stage === 'videos_done') {
-            await advancePipeline();
-            await sleep(2000); // Brief pause after advancing
-          } else {
-            // Still processing, wait longer before re-polling
-            await sleep(5000);
-          }
-        } catch {
-          await sleep(5000);
-        }
+    const formDataObj = JSON.parse(storedParams);
+    const fd = new FormData();
+    Object.entries(formDataObj).forEach(([key, value]) => {
+      if (value !== null && value !== undefined) {
+        fd.append(key, value as string);
       }
-    };
+    });
 
-    pollAndAdvance();
-    return () => { running = false; };
-  }, [jobId, router, advancePipeline]);
+    // Add files from global temp storage
+    const pendingFiles = (window as any).__pendingFiles;
+    if (pendingFiles?.stylePhoto) {
+      fd.append('photo', pendingFiles.stylePhoto);
+    }
+    if (pendingFiles?.scenePhotos) {
+      pendingFiles.scenePhotos.forEach((p: File) => fd.append('scene_photos', p));
+    }
+    delete (window as any).__pendingFiles;
 
-  if (!status) {
-    return (
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#ff8c00] mx-auto"></div>
-        <p className="mt-4 text-gray-400">Starting pipeline...</p>
-      </div>
-    );
-  }
+    // Start SSE stream
+    fetch('/api/generate', { method: 'POST', body: fd })
+      .then(async (response) => {
+        if (!response.ok) {
+          const err = await response.json();
+          setError(err.error || 'Generation failed');
+          return;
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) { setError('No stream'); return; }
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data: ProgressData = JSON.parse(line.slice(6));
+                setStatus(data);
+
+                if (data.images) setImages(prev => [...new Set([...prev, ...data.images!])]);
+                if (data.stage === 'error') setError(data.error || data.message);
+                if (data.stage === 'complete') {
+                  // Store result data and redirect
+                  sessionStorage.setItem(`result_${jobId}`, JSON.stringify(data));
+                  setTimeout(() => router.push(`/result/${jobId}`), 2000);
+                }
+              } catch {}
+            }
+          }
+        }
+      })
+      .catch(err => setError(err.message));
+  }, [jobId, router]);
 
   const currentIdx = getStageIndex(status.stage);
 
@@ -107,7 +115,7 @@ export default function ProgressTracker({ jobId }: Props) {
         <div className="bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded-lg">
           <p className="font-semibold">Error</p>
           <p className="text-sm mt-1">{error}</p>
-          <button onClick={() => { setError(''); advancePipeline(); }} className="mt-2 text-[#ff8c00] hover:underline text-sm">Retry</button>
+          <a href="/" className="mt-2 inline-block text-[#ff8c00] hover:underline text-sm">← Try again</a>
         </div>
       )}
 
@@ -124,28 +132,28 @@ export default function ProgressTracker({ jobId }: Props) {
 
       {/* Stage Indicators */}
       <div className="flex justify-between">
-        {['Script', 'Images', 'Videos', 'Audio', 'Complete'].map((stage, index) => {
+        {STAGE_LABELS.map((label, index) => {
           const isComplete = index < currentIdx || status.stage === 'complete';
-          const isCurrent = index === currentIdx && status.stage !== 'complete';
+          const isCurrent = index === currentIdx && status.stage !== 'complete' && status.stage !== 'error';
           return (
-            <div key={stage} className="flex flex-col items-center flex-1">
+            <div key={label} className="flex flex-col items-center flex-1">
               <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 transition-colors ${
                 isComplete ? 'bg-[#ff8c00] text-white' : isCurrent ? 'bg-[#ff8c00]/30 text-[#ff8c00] animate-pulse' : 'bg-gray-700 text-gray-500'
               }`}>
                 {isComplete ? '✓' : index + 1}
               </div>
-              <span className="text-xs text-gray-400 text-center">{stage}</span>
+              <span className="text-xs text-gray-400 text-center">{label}</span>
             </div>
           );
         })}
       </div>
 
       {/* Images Preview */}
-      {status.files?.images && status.files.images.length > 0 && (
+      {images.length > 0 && (
         <div>
           <h3 className="text-lg font-semibold mb-4">Generated Images</h3>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {status.files.images.map((image, index) => (
+            {images.map((image, index) => (
               <div key={image} className="aspect-video bg-[#242424] rounded-lg overflow-hidden">
                 <img src={`/api/outputs/${jobId}/${image}`} alt={`Scene ${index + 1}`} className="w-full h-full object-cover" />
               </div>
@@ -155,9 +163,9 @@ export default function ProgressTracker({ jobId }: Props) {
       )}
 
       {/* Video generation note */}
-      {status.stage?.startsWith('video_') && (
+      {status.stage === 'videos' && (
         <div className="bg-blue-500/10 border border-blue-500/50 text-blue-400 px-6 py-4 rounded-lg">
-          <p className="text-sm"><strong>Note:</strong> Each video scene takes 1-2 minutes to generate. Please keep this page open.</p>
+          <p className="text-sm"><strong>⏳ Please keep this page open.</strong> Each video scene takes 1-2 minutes with a 90-second cooldown between scenes.</p>
         </div>
       )}
 
@@ -171,5 +179,3 @@ export default function ProgressTracker({ jobId }: Props) {
     </div>
   );
 }
-
-function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }

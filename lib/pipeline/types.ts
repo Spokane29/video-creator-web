@@ -3,6 +3,8 @@ export interface Scene {
   description: string;
   dialogue: string;
   motion_description?: string;
+  motion_prompt?: string;
+  narration?: string;
   image_prompt?: string;
 }
 

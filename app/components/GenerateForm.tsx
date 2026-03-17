@@ -41,18 +41,19 @@ export default function GenerateForm() {
         formData.append('scene_photos', photo);
       });
 
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        body: formData,
-      });
+      // Generate a job ID locally
+      const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-      if (response.ok) {
-        const { jobId } = await response.json();
-        router.push(`/progress/${jobId}`);
-      } else {
-        const data = await response.json();
-        setError(data.error || 'Generation failed');
-      }
+      // Store form params (without files) for the progress page
+      sessionStorage.setItem(`job_${jobId}`, JSON.stringify({
+        prompt, mode, template, aspect_ratio: aspectRatio,
+        scenes: scenes.toString(), duration: duration.toString(), voice,
+      }));
+
+      // Store files in a temporary global so progress page can access them
+      (window as any).__pendingFiles = { stylePhoto, scenePhotos };
+
+      router.push(`/progress/${jobId}`);
     } catch (err) {
       setError('Connection error');
     } finally {
