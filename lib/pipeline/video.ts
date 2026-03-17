@@ -100,6 +100,46 @@ export async function generateVideo(
   return await downloadVideo(videoUri);
 }
 
+export async function generateSingleVideo(
+  imageBase64: string,
+  motionPrompt: string,
+  duration: number,
+  jobDir: string,
+  sceneIndex: number
+): Promise<string> {
+  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
+  if (duration < 5 || duration > 8) duration = 6;
+
+  const payload = {
+    instances: [{
+      image: { bytesBase64Encoded: imageBase64, mimeType: 'image/png' },
+      prompt: motionPrompt
+    }],
+    parameters: { durationSeconds: duration }
+  };
+
+  const response = await fetch(`${VEO_API_URL}?key=${GEMINI_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Veo 2 request failed: ${error}`);
+  }
+
+  const data = await response.json();
+  const result = await pollOperation(data.name);
+  const videoUri = result.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
+  if (!videoUri) throw new Error('No video URI in response');
+
+  const videoBuffer = await downloadVideo(videoUri);
+  const filename = `scene_${sceneIndex + 1}.mp4`;
+  await fs.writeFile(path.join(jobDir, filename), videoBuffer);
+  return filename;
+}
+
 export async function generateAllVideos(
   scenes: Scene[],
   jobDir: string,

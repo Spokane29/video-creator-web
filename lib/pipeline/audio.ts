@@ -58,6 +58,18 @@ export async function generateAudio(text: string, voice: string): Promise<Buffer
   return Buffer.from(audioBase64, 'base64');
 }
 
+export async function generateSingleAudio(
+  text: string,
+  voice: string,
+  jobDir: string,
+  sceneIndex: number
+): Promise<string> {
+  const audioBuffer = await generateAudio(text, voice);
+  const filename = `scene_${sceneIndex + 1}.mp3`;
+  await fs.writeFile(path.join(jobDir, filename), audioBuffer);
+  return filename;
+}
+
 export async function generateAllAudio(
   scenes: Scene[],
   voice: string,

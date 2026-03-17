@@ -13,7 +13,7 @@ export interface Script {
 
 export interface JobStatus {
   jobId: string;
-  stage: 'script' | 'images' | 'videos' | 'audio' | 'assembly' | 'complete' | 'error';
+  stage: string;
   progress: number;
   message: string;
   files: {
