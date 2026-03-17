@@ -101,14 +101,8 @@ export async function generateSingleVideo(
   // Generate video
   const videoUrl = await submitFalVideo(imageUrl, motionPrompt, duration);
 
-  // Download the video
-  const videoRes = await fetch(videoUrl);
-  if (!videoRes.ok) throw new Error('Failed to download video from fal.ai');
-  const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
-
-  const filename = `scene_${sceneIndex + 1}.mp4`;
-  await fs.writeFile(path.join(jobDir, filename), videoBuffer);
-  return filename;
+  // Return the CDN URL directly (Vercel serverless can't serve /tmp files to other requests)
+  return videoUrl;
 }
 
 export async function generateAllVideos(

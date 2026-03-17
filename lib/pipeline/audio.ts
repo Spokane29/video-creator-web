@@ -52,10 +52,33 @@ export async function generateSingleAudio(
   jobDir: string,
   sceneIndex: number
 ): Promise<string> {
-  const audioBuffer = await generateAudio(text, voice);
-  const filename = `scene_${sceneIndex + 1}.mp3`;
-  await fs.writeFile(path.join(jobDir, filename), audioBuffer);
-  return filename;
+  if (!FAL_KEY) throw new Error('FAL_KEY not configured');
+
+  const kokoroVoice = VOICE_MAPPING[voice] || 'af_heart';
+
+  const res = await fetch('https://fal.run/fal-ai/kokoro/american-english', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Key ${FAL_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      text,
+      voice: kokoroVoice,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Audio generation failed: ${err}`);
+  }
+
+  const data = await res.json();
+  const audioUrl = data.audio_url || data.audio?.url;
+  if (!audioUrl) throw new Error('No audio URL in response');
+
+  // Return CDN URL directly (Vercel serverless can't serve /tmp files)
+  return audioUrl;
 }
 
 export async function generateAllAudio(

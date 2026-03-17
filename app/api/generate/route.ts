@@ -148,6 +148,7 @@ export async function POST(request: NextRequest) {
             videos: videoPaths,
             audio: audioPaths,
             images: imagePaths,
+            imageUrls,
             script,
           });
 
