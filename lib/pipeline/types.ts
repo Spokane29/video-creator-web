@@ -6,6 +6,8 @@ export interface Scene {
   motion_prompt?: string;
   narration?: string;
   image_prompt?: string;
+  visual_description?: string;
+  character?: string;
 }
 
 export interface Script {

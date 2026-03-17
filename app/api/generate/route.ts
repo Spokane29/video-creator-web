@@ -109,10 +109,10 @@ export async function POST(request: NextRequest) {
             videoPaths.push(videoFile);
             send({ stage: 'videos', progress: 45 + ((i + 1) / scenes.length) * 25, message: `Video ${i + 1}/${scenes.length} done!` });
 
-            // Cooldown between scenes
+            // Brief cooldown between scenes
             if (i < scenes.length - 1) {
-              send({ stage: 'videos', progress: 45 + ((i + 1) / scenes.length) * 25, message: `Cooling down 90s before next video...` });
-              await new Promise(r => setTimeout(r, 90000));
+              send({ stage: 'videos', progress: 45 + ((i + 1) / scenes.length) * 25, message: `Starting next video...` });
+              await new Promise(r => setTimeout(r, 5000));
             }
           }
 

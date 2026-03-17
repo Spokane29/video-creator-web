@@ -2,64 +2,55 @@ import { Scene } from './types';
 import fs from 'fs/promises';
 import path from 'path';
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const IMAGEN_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict';
+const FAL_KEY = process.env.FAL_KEY;
 
-function aspectRatioToImagenFormat(aspectRatio: string): string {
-  const mapping: Record<string, string> = {
-    '16:9': '16:9',
-    '9:16': '9:16',
-    '1:1': '1:1',
-    '4:3': '4:3',
-  };
-  return mapping[aspectRatio] || '9:16';
-}
+const ASPECT_TO_FAL: Record<string, string> = {
+  '16:9': 'landscape_16_9',
+  '9:16': 'portrait_16_9',
+  '1:1': 'square',
+  '4:3': 'landscape_4_3',
+};
 
-export async function generateImage(
-  scene: Scene,
+async function generateImageWithFlux(
+  prompt: string,
   aspectRatio: string,
   styleReference?: string
 ): Promise<Buffer> {
-  if (!GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY not configured');
-  }
+  if (!FAL_KEY) throw new Error('FAL_KEY not configured');
 
-  const prompt = scene.image_prompt || scene.description;
+  const falAspect = ASPECT_TO_FAL[aspectRatio] || 'landscape_16_9';
 
   const payload: any = {
-    instances: [{ prompt }],
-    parameters: {
-      sampleCount: 1,
-      aspectRatio: aspectRatioToImagenFormat(aspectRatio),
-    }
+    prompt,
+    image_size: falAspect,
+    num_images: 1,
   };
 
-  // Add style reference if provided (base64 encoded image)
-  if (styleReference) {
-    payload.instances[0].styleReferenceImage = {
-      bytesBase64Encoded: styleReference,
-    };
-  }
+  // Use Flux Dev for better quality, Schnell for speed
+  const model = 'fal-ai/flux/dev';
 
-  const response = await fetch(`${IMAGEN_API_URL}?key=${GEMINI_API_KEY}`, {
+  const res = await fetch(`https://fal.run/${model}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+    headers: {
+      'Authorization': `Key ${FAL_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
   });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Image generation failed: ${error}`);
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Image generation failed: ${err}`);
   }
 
-  const data = await response.json();
-  
-  if (!data.predictions || !data.predictions[0] || !data.predictions[0].bytesBase64Encoded) {
-    throw new Error('No image data in response');
-  }
+  const data = await res.json();
+  const imageUrl = data.images?.[0]?.url;
+  if (!imageUrl) throw new Error('No image URL in response');
 
-  const imageBase64 = data.predictions[0].bytesBase64Encoded;
-  return Buffer.from(imageBase64, 'base64');
+  // Download the image
+  const imgRes = await fetch(imageUrl);
+  if (!imgRes.ok) throw new Error('Failed to download image');
+  return Buffer.from(await imgRes.arrayBuffer());
 }
 
 export async function generateAllImages(
@@ -73,17 +64,15 @@ export async function generateAllImages(
 
   for (let i = 0; i < scenes.length; i++) {
     const scene = scenes[i];
-    const imageBuffer = await generateImage(scene, aspectRatio, styleReference);
-    
+    const prompt = scene.image_prompt || scene.visual_description || `Scene ${i + 1}`;
+
+    const imageBuffer = await generateImageWithFlux(prompt, aspectRatio, styleReference);
+
     const filename = `scene_${i + 1}.png`;
-    const filepath = path.join(jobDir, filename);
-    await fs.writeFile(filepath, imageBuffer);
-    
+    await fs.writeFile(path.join(jobDir, filename), imageBuffer);
     imagePaths.push(filename);
-    
-    if (onProgress) {
-      onProgress(i + 1, scenes.length);
-    }
+
+    if (onProgress) onProgress(i + 1, scenes.length);
   }
 
   return imagePaths;

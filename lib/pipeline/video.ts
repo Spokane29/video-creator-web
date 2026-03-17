@@ -2,102 +2,72 @@ import { Scene } from './types';
 import fs from 'fs/promises';
 import path from 'path';
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const VEO_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/veo-2.0-generate-001:predictLongRunning';
-const OPERATIONS_URL = 'https://generativelanguage.googleapis.com/v1beta';
-
-const COOLDOWN_MS = 90000; // 90 seconds between video generations
+const FAL_KEY = process.env.FAL_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // Fallback
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function pollOperation(operationName: string): Promise<any> {
-  const url = `${OPERATIONS_URL}/${operationName}?key=${GEMINI_API_KEY}`;
-  
-  while (true) {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Operation polling failed: ${await response.text()}`);
-    }
-    
-    const data = await response.json();
-    
-    if (data.done) {
-      if (data.error) {
-        throw new Error(`Video generation failed: ${JSON.stringify(data.error)}`);
-      }
-      return data;
-    }
-    
-    // Wait 5 seconds before polling again
-    await sleep(5000);
-  }
-}
+async function submitFalVideo(imageUrl: string, motionPrompt: string, duration: number): Promise<string> {
+  if (!FAL_KEY) throw new Error('FAL_KEY not configured');
 
-async function downloadVideo(uri: string): Promise<Buffer> {
-  const response = await fetch(`${uri}&key=${GEMINI_API_KEY}`);
-  if (!response.ok) {
-    throw new Error(`Video download failed: ${await response.text()}`);
-  }
-  return Buffer.from(await response.arrayBuffer());
-}
-
-export async function generateVideo(
-  imageBuffer: Buffer,
-  scene: Scene,
-  duration: number
-): Promise<Buffer> {
-  if (!GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY not configured');
-  }
-
-  // Ensure duration is within valid range
-  if (duration < 5 || duration > 8) {
-    throw new Error('Duration must be between 5-8 seconds');
-  }
-
-  const imageBase64 = imageBuffer.toString('base64');
-  const motionPrompt = scene.motion_description || 'Smooth camera movement, subtle animation';
-
-  const payload = {
-    instances: [{
-      image: {
-        bytesBase64Encoded: imageBase64,
-        mimeType: 'image/png'
-      },
-      prompt: motionPrompt
-    }],
-    parameters: {
-      durationSeconds: duration
-    }
-  };
-
-  const response = await fetch(`${VEO_API_URL}?key=${GEMINI_API_KEY}`, {
+  // fal.ai queue submit
+  const res = await fetch('https://fal.run/wan/v2.6/image-to-video', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+    headers: {
+      'Authorization': `Key ${FAL_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      prompt: motionPrompt,
+      image_url: imageUrl,
+      duration: duration <= 5 ? '5s' : duration <= 10 ? '10s' : '15s',
+      resolution: '720p',
+    }),
   });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Video generation request failed: ${error}`);
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`fal.ai video generation failed: ${err}`);
   }
 
-  const data = await response.json();
-  const operationName = data.name;
+  const data = await res.json();
+  
+  // fal.run returns the result directly (synchronous endpoint)
+  if (data.video?.url) {
+    return data.video.url;
+  }
+  
+  throw new Error('No video URL in fal.ai response');
+}
 
-  // Poll for completion
-  const result = await pollOperation(operationName);
+async function uploadImageToFal(imageBase64: string): Promise<string> {
+  if (!FAL_KEY) throw new Error('FAL_KEY not configured');
 
-  // Extract video URI
-  const videoUri = result.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
-  if (!videoUri) {
-    throw new Error('No video URI in response');
+  // Upload image to fal.ai storage
+  const imageBuffer = Buffer.from(imageBase64, 'base64');
+  
+  const res = await fetch('https://fal.ai/api/storage/upload/base64', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Key ${FAL_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      file_name: 'scene.png',
+      content_type: 'image/png',
+      data: imageBase64,
+    }),
+  });
+
+  if (!res.ok) {
+    // Fallback: use data URI
+    return `data:image/png;base64,${imageBase64}`;
   }
 
-  // Download the video
-  return await downloadVideo(videoUri);
+  const data = await res.json();
+  return data.url || data.file_url || `data:image/png;base64,${imageBase64}`;
 }
 
 export async function generateSingleVideo(
@@ -107,34 +77,20 @@ export async function generateSingleVideo(
   jobDir: string,
   sceneIndex: number
 ): Promise<string> {
-  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
-  if (duration < 5 || duration > 8) duration = 6;
+  if (duration < 5) duration = 5;
+  if (duration > 8) duration = 5; // Wan supports 5, 10, 15 — use 5 for short scenes
 
-  const payload = {
-    instances: [{
-      image: { bytesBase64Encoded: imageBase64, mimeType: 'image/png' },
-      prompt: motionPrompt
-    }],
-    parameters: { durationSeconds: duration }
-  };
+  // Upload image to get a URL
+  const imageUrl = await uploadImageToFal(imageBase64);
 
-  const response = await fetch(`${VEO_API_URL}?key=${GEMINI_API_KEY}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+  // Generate video
+  const videoUrl = await submitFalVideo(imageUrl, motionPrompt, duration);
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Veo 2 request failed: ${error}`);
-  }
+  // Download the video
+  const videoRes = await fetch(videoUrl);
+  if (!videoRes.ok) throw new Error('Failed to download video from fal.ai');
+  const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
 
-  const data = await response.json();
-  const result = await pollOperation(data.name);
-  const videoUri = result.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
-  if (!videoUri) throw new Error('No video URI in response');
-
-  const videoBuffer = await downloadVideo(videoUri);
   const filename = `scene_${sceneIndex + 1}.mp4`;
   await fs.writeFile(path.join(jobDir, filename), videoBuffer);
   return filename;
@@ -149,28 +105,24 @@ export async function generateAllVideos(
   const videoPaths: string[] = [];
 
   for (let i = 0; i < scenes.length; i++) {
-    // Read the generated image
     const imagePath = path.join(jobDir, `scene_${i + 1}.png`);
     const imageBuffer = await fs.readFile(imagePath);
+    const imageBase64 = imageBuffer.toString('base64');
 
-    // Generate video
-    const videoBuffer = await generateVideo(imageBuffer, scenes[i], duration);
-
-    // Save video
-    const filename = `scene_${i + 1}.mp4`;
-    const filepath = path.join(jobDir, filename);
-    await fs.writeFile(filepath, videoBuffer);
-
+    const filename = await generateSingleVideo(
+      imageBase64,
+      scenes[i].motion_prompt || scenes[i].motion_description || 'gentle smooth animation',
+      duration,
+      jobDir,
+      i
+    );
     videoPaths.push(filename);
 
-    if (onProgress) {
-      onProgress(i + 1, scenes.length);
-    }
+    if (onProgress) onProgress(i + 1, scenes.length);
 
-    // Apply cooldown between scenes (except after last scene)
+    // Small cooldown between scenes (fal.ai is more lenient)
     if (i < scenes.length - 1) {
-      console.log(`Cooldown: waiting ${COOLDOWN_MS / 1000} seconds before next video...`);
-      await sleep(COOLDOWN_MS);
+      await sleep(5000);
     }
   }
 
