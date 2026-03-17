@@ -1,12 +1,14 @@
 import { JobStatus } from './pipeline/types';
-import fs from 'fs/promises';
+import fs from 'fs';
+import fsp from 'fs/promises';
 import path from 'path';
 
-// In-memory job tracking (suitable for single-user app)
-const jobs = new Map<string, JobStatus>();
+const JOB_DIR = '/tmp/video-creator';
+const HISTORY_FILE = '/tmp/video-creator-history.json';
 
-// Job history for persistence
-const historyFile = '/tmp/video-creator-history.json';
+function jobStatusPath(jobId: string): string {
+  return path.join(JOB_DIR, jobId, '_status.json');
+}
 
 export function createJob(jobId: string): JobStatus {
   const job: JobStatus = {
@@ -16,18 +18,27 @@ export function createJob(jobId: string): JobStatus {
     message: 'Starting script generation...',
     files: {},
   };
-  jobs.set(jobId, job);
+  // Ensure dir exists and write status synchronously
+  const dir = path.join(JOB_DIR, jobId);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(jobStatusPath(jobId), JSON.stringify(job));
   return job;
 }
 
 export function getJob(jobId: string): JobStatus | undefined {
-  return jobs.get(jobId);
+  try {
+    const data = fs.readFileSync(jobStatusPath(jobId), 'utf-8');
+    return JSON.parse(data);
+  } catch {
+    return undefined;
+  }
 }
 
 export function updateJob(jobId: string, updates: Partial<JobStatus>): void {
-  const job = jobs.get(jobId);
+  const job = getJob(jobId);
   if (job) {
     Object.assign(job, updates);
+    fs.writeFileSync(jobStatusPath(jobId), JSON.stringify(job));
   }
 }
 
@@ -35,17 +46,12 @@ export async function saveToHistory(job: JobStatus): Promise<void> {
   try {
     let history: JobStatus[] = [];
     try {
-      const data = await fs.readFile(historyFile, 'utf-8');
+      const data = await fsp.readFile(HISTORY_FILE, 'utf-8');
       history = JSON.parse(data);
-    } catch {
-      // File doesn't exist yet
-    }
-    
+    } catch {}
     history.unshift(job);
-    // Keep only last 50 jobs
     history = history.slice(0, 50);
-    
-    await fs.writeFile(historyFile, JSON.stringify(history, null, 2));
+    await fsp.writeFile(HISTORY_FILE, JSON.stringify(history, null, 2));
   } catch (error) {
     console.error('Failed to save to history:', error);
   }
@@ -53,7 +59,7 @@ export async function saveToHistory(job: JobStatus): Promise<void> {
 
 export async function getHistory(): Promise<JobStatus[]> {
   try {
-    const data = await fs.readFile(historyFile, 'utf-8');
+    const data = await fsp.readFile(HISTORY_FILE, 'utf-8');
     return JSON.parse(data);
   } catch {
     return [];
@@ -65,7 +71,7 @@ export function generateJobId(): string {
 }
 
 export async function ensureJobDir(jobId: string): Promise<string> {
-  const dir = path.join('/tmp/video-creator', jobId);
-  await fs.mkdir(dir, { recursive: true });
+  const dir = path.join(JOB_DIR, jobId);
+  await fsp.mkdir(dir, { recursive: true });
   return dir;
 }
